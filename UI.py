@@ -31,6 +31,18 @@ class Capture(QtCore.QThread):
         
         self.relay = 0
         self.angvel = 0
+
+        self.q_angle = 0
+        self.q_bias = 0
+        self.r_measure = 0
+
+        self.r_sample = 0
+        self.p_sample = 0
+
+        self.f_count = 0
+        self.f_res = 0
+        self.f_dist = 0
+        self.m_dist = 0
         
         self.theta = 0
         self.roll = 0
@@ -88,15 +100,28 @@ class Capture(QtCore.QThread):
         return bytemsg.encode('utf-8')
 
     def encodeComm(self, relay, angvel):
-        bytemsg = str(relay)
+        bytemsg = ''
         if angvel >= 100:
-            bytemsg = bytemsg + str(angvel)
+            bytemsg = bytemsg + str(angvel) + str(relay)
         elif angvel >= 10:
-            bytemsg = bytemsg + '0' + str(angvel)
+            bytemsg = bytemsg + '0' + str(angvel) + str(relay)
         else:
-            bytemsg = bytemsg + '00' + str(angvel)
+            bytemsg = bytemsg + '00' + str(angvel) + str(relay)
 
         return bytemsg.encode('utf-8')
+
+    def setArgs(self, Q_angle, Q_bias, R_measure, R_sample, P_sample, F_count, F_res, F_dist, M_dist):
+        self.q_angle = float(Q_angle)
+        self.q_bias = float(Q_bias)
+        self.r_measure = float(R_measure)
+
+        self.r_sample = int(R_sample)
+        self.p_sample = int(P_sample)
+
+        self.f_count = int(F_count)
+        self.f_res = float(F_res)
+        self.f_dist = int(F_dist)
+        self.m_dist = int(M_dist)
 
     ### Control panel ###
     def RelayControl(self):
@@ -115,14 +140,10 @@ class Capture(QtCore.QThread):
         cap = cv2.VideoCapture(0)
         cap.set(3, 960)
         cap.set(4, 720)
-        
-        Q_angle = 0.1
-        Q_bias = 0.003
-        R_measure = 0.02
 
         txt = self.ser.readline().decode('utf-8') # get rid of garbage
                     
-        cov = self.encodeCovariance([Q_angle, Q_bias, R_measure])
+        cov = self.encodeCovariance([self.q_angle, self.q_bias, self.r_measure])
         self.ser.write(cov) #103303202
         txt = self.ser.readline().decode('utf-8')
         print("Q_angle, Q_bias, R_measure:") # ensure covariances to be successfully set
@@ -247,29 +268,56 @@ class UI(QMainWindow):
         # Q_angle, Q_bias, R_measure
         KalmanLabel = QLabel(self)
         KalmanLabel.setGeometry(QtCore.QRect(1000, 210, 300, 180))
-        KalmanLabel.setText("Kalman Options \n Q_angle   Q_bias  R_measure")
+        KalmanLabel.setText("Kalman Options \n Q_angle \n \n Q_bias \n \n R_measure")
         KalmanLabel.setFont(font)
         KalmanLabel.setStyleSheet("border: 1px solid black")
         KalmanLabel.setAlignment(QtCore.Qt.AlignTop)
+        self.QangleInput = QPlainTextEdit("0.1", self)
+        self.QangleInput.setGeometry(QtCore.QRect(1160, 240, 120, 40))
+        self.QangleInput.setFont(font)
+        self.QbiasInput = QPlainTextEdit("0.003", self)
+        self.QbiasInput.setGeometry(QtCore.QRect(1160, 290, 120, 40))
+        self.QbiasInput.setFont(font)
+        self.RmeasureInput = QPlainTextEdit("0.02", self)
+        self.RmeasureInput.setGeometry(QtCore.QRect(1160, 340, 120, 40))
+        self.RmeasureInput.setFont(font)
 
         ### Spline options ###
         # Roll, pitch sampling ratio
         SplineLabel = QLabel(self)
         SplineLabel.setGeometry(QtCore.QRect(1000, 410, 300, 180))
-        SplineLabel.setText("Spline Options")
+        SplineLabel.setText("Spline Options (Sampling Ratio) \n Roll \n \n Pitch")
         SplineLabel.setFont(font)
         SplineLabel.setStyleSheet("border: 1px solid black")
         SplineLabel.setAlignment(QtCore.Qt.AlignTop)
+        self.RSampleInput = QPlainTextEdit("10", self)
+        self.RSampleInput.setGeometry(QtCore.QRect(1160, 440, 120, 40))
+        self.RSampleInput.setFont(font)
+        self.PSampleInput = QPlainTextEdit("10", self)
+        self.PSampleInput.setGeometry(QtCore.QRect(1160, 490, 120, 40))
+        self.PSampleInput.setFont(font)
 
         ### Feature detect options ###
         # features count, features resolution, features distance, match distance
         FeatureLabel = QLabel(self)
         FeatureLabel.setGeometry(QtCore.QRect(1000, 610, 300, 300))
-        FeatureLabel.setText("Feature Options")
+        FeatureLabel.setText("Feature Options \n Feature count \n \n Feature res. \n \n Feature dist. \n \n min. Match dist.")
         FeatureLabel.setFont(font)
         FeatureLabel.setStyleSheet("border: 1px solid black")
         FeatureLabel.setAlignment(QtCore.Qt.AlignTop)
-        
+        self.FcountInput = QPlainTextEdit("50", self)
+        self.FcountInput.setGeometry(QtCore.QRect(1160, 640, 120, 40))
+        self.FcountInput.setFont(font)
+        self.FresInput = QPlainTextEdit("0.1", self)
+        self.FresInput.setGeometry(QtCore.QRect(1160, 690, 120, 40))
+        self.FresInput.setFont(font)
+        self.FdistInput = QPlainTextEdit("30", self)
+        self.FdistInput.setGeometry(QtCore.QRect(1160, 740, 120, 40))
+        self.FdistInput.setFont(font)
+        self.MdistInput = QPlainTextEdit("1200", self)
+        self.MdistInput.setGeometry(QtCore.QRect(1160, 790, 120, 40))
+        self.MdistInput.setFont(font)
+
     def ConnClicked(self):
         print("connect")
         # Video stream thread
@@ -277,6 +325,18 @@ class UI(QMainWindow):
         self.video_thread = Capture(port)
         self.video_thread.changePixmap.connect(self.setImage)
         self.video_thread.start()
+
+        # Send arguments
+        Q_angle = self.QangleInput.toPlainText()
+        Q_bias = self.QbiasInput.toPlainText()
+        R_measure = self.RmeasureInput.toPlainText()
+        R_sample = self.RSampleInput.toPlainText()
+        P_sample = self.PSampleInput.toPlainText()
+        F_count = self.FcountInput.toPlainText()
+        F_res = self.FresInput.toPlainText()
+        F_dist = self.FdistInput.toPlainText()
+        M_dist = self.MdistInput.toPlainText()
+        self.video_thread.setArgs(Q_angle, Q_bias, R_measure, R_sample, P_sample, F_count, F_res, F_dist, M_dist)
 
     def RelayClicked(self):
         self.video_thread.RelayControl()

@@ -102,8 +102,6 @@ void setup() {
   digitalWrite(RelayPin0, LOW);
   pinMode(RelayPin1, OUTPUT);
   digitalWrite(RelayPin1, LOW);
-  pinMode(6, OUTPUT);
-  digitalWrite(6, LOW);
   
   mpu.initialize();
   mpu.setRate(400);
@@ -157,8 +155,9 @@ void setup() {
   roll_measure  = -atan2(imu[1], imu[2]) * RAD_TO_DEG;
   pitch_measure = atan(imu[0] / sqrt(imu[1] * imu[1] + imu[2] * imu[2])) * RAD_TO_DEG;
 
+  /*delay(3000);
   digitalWrite(RelayPin0, HIGH);
-  digitalWrite(RelayPin1, HIGH);
+  digitalWrite(RelayPin1, HIGH);*/
 
   // starting angle setting
   kalmanX.setAngle(roll_measure);
@@ -204,28 +203,24 @@ void loop() {
   pitch_predict = kalmanY.getAngle(pitch_measure, imu[4], dt);
 
   /* 4. Send via serial */
-  if(Serial.available()){
+  if(Serial.available()==4){
     int bts = Serial.available();
 
     byte comm[4];
-    if (bts == 4){
-      for (int i = 0; i < 4; i++){
-        comm[i] = Serial.read()-'0';
-      }
-      if(comm[0] == 1){ //Relay
-        digitalWrite(RelayPin0, HIGH); digitalWrite(RelayPin1, HIGH);
-      }
-      else{
-        digitalWrite(RelayPin0, LOW); digitalWrite(RelayPin1, LOW);
-      }
+    for (int i = 0; i < 4; i++){
+      comm[i] = Serial.read()-'0';
+    }
+    vel = comm[0]*100 + comm[1]*10 + comm[2];
+    lcd.setCursor(0,0); lcd.print(vel);
+    if(comm[3]==0){
+      digitalWrite(RelayPin0, LOW);
+      digitalWrite(RelayPin1, LOW);
+    }
+    else{
+      digitalWrite(RelayPin0, HIGH);
+      digitalWrite(RelayPin1, HIGH);
+    }
 
-      vel = comm[1]*100 + comm[2]*10 + comm[3];
-      lcd.setCursor(0,0); lcd.print(vel);
-    }
-    if (bts != 4){ // something is wrong
-      digitalWrite(RelayPin0, LOW); digitalWrite(RelayPin1, LOW);
-    }
-    
     /*Serial.print(count[0]);Serial.print(",");
     Serial.print(count[1]);Serial.print(",");
     Serial.print(count[2]);Serial.print(",");
