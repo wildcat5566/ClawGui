@@ -4,9 +4,13 @@
 #include "motor_module_v1.h"
 #include <PID_v1.h>
 #include "Kalman.h"
+#include <LiquidCrystal.h>
 
-#define RelayPin0 4
-#define RelayPin1 2
+const int rs = 12, en = 11, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+
+#define RelayPin0 6
+#define RelayPin1 7
 #define ExtResetPin 23
 int res = 113246;
 
@@ -68,6 +72,7 @@ double FL_PWMvalue = 0, FR_PWMvalue = 0, RL_PWMvalue = 0, RR_PWMvalue = 0, WL_PW
 float FL_Angular_V_Tar = 0, FR_Angular_V_Tar = 0, RL_Angular_V_Tar = 0, RR_Angular_V_Tar = 0;
 float Angular_V_Tar = 0;
 float Angular_V_Add = 0.1;
+int vel = 0;
 
 PID FR_PID(&FR_Feed, &FR_PWMvalue, &set[0], 0, 0, 0, DIRECT);
 PID FL_PID(&FL_Feed, &FL_PWMvalue, &set[1], 0, 0, 0, DIRECT);
@@ -78,6 +83,18 @@ PID WL_PID(&WL_Feed, &WL_PWMvalue, &set[5], 0, 0, 0, DIRECT);
 
 void setup() {
   Serial.begin(115200);
+  lcd.begin(16, 2);
+  lcd.print("hi");
+  
+  // Clear serial buffer
+  if(Serial.available()){
+    int bts = Serial.available();
+    while(bts){
+      Serial.read();
+      bts--;
+    }
+  }
+  
   Motor_Init(ExtResetPin);
   Wire.begin();
 
@@ -85,6 +102,8 @@ void setup() {
   digitalWrite(RelayPin0, LOW);
   pinMode(RelayPin1, OUTPUT);
   digitalWrite(RelayPin1, LOW);
+  pinMode(6, OUTPUT);
+  digitalWrite(6, LOW);
   
   mpu.initialize();
   mpu.setRate(400);
@@ -99,18 +118,39 @@ void setup() {
   FR.Reverse(); WR.Reverse();
 
   PID_init();
-
-
-  /*Serial.print(roll_measure); Serial.print("\t");
-  Serial.println(pitch_measure);
-  Serial.println("=============Initial guesses=============");*/
+  
   if(!mpu.testConnection()){
     Serial.println("MPU6050 connection failed");
+    while(1){} // Block progress
   }
-  while(!Serial.available() && mpu.testConnection()){//waiting for start signal
-    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+  
+  byte cov[9]; 
+  while(1){
+    if (Serial.available()==9){
+      for (int i = 0; i < 9; i++){
+        cov[i] = Serial.read()-'0';
+      }
+     break;
+    }
+  }//waiting for start signal
+  
+  // Set Kalman covariances: "152" = 1.5e(-2)
+  double Q_angle = (cov[0] + 0.1*cov[1])/pow(10, cov[2]);
+  double Q_bias = (cov[3] + 0.1*cov[4])/pow(10, cov[5]);
+  double R_measure = (cov[6] + 0.1*cov[7])/pow(10, cov[8]);
+  kalmanX.setQangle(Q_angle);
+  kalmanY.setQangle(Q_angle);
+  kalmanX.setQbias(Q_bias);
+  kalmanY.setQbias(Q_bias);
+  kalmanX.setRmeasure(R_measure);
+  kalmanY.setRmeasure(R_measure);
+
+  Serial.print(Q_angle, 4);Serial.print(",");Serial.print(Q_bias, 4);Serial.print(",");Serial.println(R_measure, 4);
+  if(Q_angle*Q_bias*R_measure==0){
+    while(1){} // Block progress
   }
 
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
   imu[0] = (ax - ax_offset) / acc_sen;
   imu[1] = (ay - ay_offset) / acc_sen;
   imu[2] = (az - az_offset) / acc_sen;
@@ -166,10 +206,26 @@ void loop() {
   /* 4. Send via serial */
   if(Serial.available()){
     int bts = Serial.available();
-    if (bts == 2){
-      digitalWrite(RelayPin0, LOW);
-      digitalWrite(RelayPin1, LOW);
+
+    byte comm[4];
+    if (bts == 4){
+      for (int i = 0; i < 4; i++){
+        comm[i] = Serial.read()-'0';
+      }
+      if(comm[0] == 1){ //Relay
+        digitalWrite(RelayPin0, HIGH); digitalWrite(RelayPin1, HIGH);
+      }
+      else{
+        digitalWrite(RelayPin0, LOW); digitalWrite(RelayPin1, LOW);
+      }
+
+      vel = comm[1]*100 + comm[2]*10 + comm[3];
+      lcd.setCursor(0,0); lcd.print(vel);
     }
+    if (bts != 4){ // something is wrong
+      digitalWrite(RelayPin0, LOW); digitalWrite(RelayPin1, LOW);
+    }
+    
     /*Serial.print(count[0]);Serial.print(",");
     Serial.print(count[1]);Serial.print(",");
     Serial.print(count[2]);Serial.print(",");
