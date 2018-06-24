@@ -144,9 +144,9 @@ void setup() {
   kalmanY.setRmeasure(R_measure);
 
   Serial.print(Q_angle, 4);Serial.print(",");Serial.print(Q_bias, 4);Serial.print(",");Serial.println(R_measure, 4);
-  if(Q_angle*Q_bias*R_measure==0){
+  /*if(Q_angle*Q_bias*R_measure==0){
     while(1){} // Block progress
-  }
+  }*/
 
   mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
   imu[0] = (ax - ax_offset) / acc_sen;
