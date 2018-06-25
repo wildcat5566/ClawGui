@@ -84,7 +84,6 @@ PID WL_PID(&WL_Feed, &WL_PWMvalue, &set[5], 0, 0, 0, DIRECT);
 void setup() {
   Serial.begin(115200);
   lcd.begin(16, 2);
-  lcd.print("hi");
   
   // Clear serial buffer
   if(Serial.available()){
@@ -203,23 +202,13 @@ void loop() {
   pitch_predict = kalmanY.getAngle(pitch_measure, imu[4], dt);
 
   /* 4. Send via serial */
-  if(Serial.available()==4){
-    int bts = Serial.available();
-
+  if(Serial.available()){
+    byte rel = Serial.read()-'0';
+    /*int bts = Serial.available();
     byte comm[4];
     for (int i = 0; i < 4; i++){
       comm[i] = Serial.read()-'0';
-    }
-    vel = comm[0]*100 + comm[1]*10 + comm[2];
-    lcd.setCursor(0,0); lcd.print(vel);
-    if(comm[3]==0){
-      digitalWrite(RelayPin0, LOW);
-      digitalWrite(RelayPin1, LOW);
-    }
-    else{
-      digitalWrite(RelayPin0, HIGH);
-      digitalWrite(RelayPin1, HIGH);
-    }
+    }*/
 
     /*Serial.print(count[0]);Serial.print(",");
     Serial.print(count[1]);Serial.print(",");
@@ -230,10 +219,20 @@ void loop() {
     Serial.print(pos_angle);   Serial.print(",");
     Serial.print(roll_predict);Serial.print(",");Serial.println(pitch_predict);
     
-    while(bts){
+    /*vel = comm[1]*100 + comm[2]*10 + comm[3];
+    lcd.setCursor(0,0); lcd.print(vel);lcd.print("  ");*/
+    if(rel==0){
+      digitalWrite(RelayPin0, LOW);
+      digitalWrite(RelayPin1, LOW);
+    }
+    else{
+      digitalWrite(RelayPin0, HIGH);
+      digitalWrite(RelayPin1, HIGH);
+    }
+    /*while(bts){
       Serial.read(); //clear serial buffer
       bts--;
-    }
+    }*/
  }
   
   /* 5. Calculate PID */
@@ -244,9 +243,13 @@ void loop() {
   WR_Feed = count[4];
   WL_Feed = count[5];
 
-  if(grad < 200){
+  if(grad < vel){
     grad++;
   }
+  else if(grad > vel){
+    grad--;
+  }
+  lcd.setCursor(0,1);lcd.print(grad);lcd.print("  ");
   
   set[0] += grad;
   set[1] += grad;

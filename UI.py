@@ -17,18 +17,16 @@ class Capture(QtCore.QThread):
     
     def __init__(self, ComNumber):
         QtCore.QThread.__init__(self)
-        self.width = 960
-        self.height = 720
+        self.width = 800
+        self.height = 600
         self.dist_width = 640
         self.dist_height = 480
         self.edge = 20
         
         self.f = None
         self.window = [self.height * 0.5, self.width * 0.5]
-        self.lb = int(self.window[1]-0.5*self.dist_width)
-        self.rb = int(self.window[1]+0.5*self.dist_width)
-        self.tb = int(self.window[0]-0.5*self.dist_height)
-        self.bb = int(self.window[0]+0.5*self.dist_height)
+        self.vb = [int(self.window[1]-0.5*self.dist_width), int(self.window[1]+0.5*self.dist_width)]
+        self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]+0.5*self.dist_height)]
 
         self.K = np.matrix([[756.78768558,   0.        , 629.89805344],
                             [  0.        , 756.86336981, 345.49169401],
@@ -48,6 +46,7 @@ class Capture(QtCore.QThread):
 
         self.r_sample = 0
         self.p_sample = 0
+        self.bench = None
 
         self.f_count = 0
         self.f_res = 0
@@ -55,9 +54,9 @@ class Capture(QtCore.QThread):
         self.m_dist = 0
         self.r_tol = 0
         
-        self.theta = 0
-        self.roll = 0
-        self.pitch = 0
+        self.theta = None
+        self.roll = None
+        self.pitch = None
 
         self.displayOpt = None
 
@@ -107,12 +106,17 @@ class Capture(QtCore.QThread):
 
         self.r_sample = int(R_sample)
         self.p_sample = int(P_sample)
+        self.bench = np.zeros((self.r_sample, self.height, self.width, 3),dtype=np.uint8)
+        self.theta = np.zeros((self.r_sample))
+        self.roll = np.zeros((self.r_sample))
+        self.pitch = np.zeros((self.r_sample))
 
         self.f_count = int(F_count)
         self.f_res = float(F_res)
         self.f_dist = int(F_dist)
         self.m_dist = int(M_dist)
         self.r_tol = float(R_tol)
+        self.m_count = 0
         
     def encodeCovariance(self, angles):
         bytemsg = ''
@@ -128,14 +132,18 @@ class Capture(QtCore.QThread):
         return bytemsg.encode('utf-8')
 
     def encodeComm(self, relay, angvel):
-        bytemsg = ''
+        bytemsg = str(relay)
         if angvel >= 100:
-            bytemsg = bytemsg + str(angvel) + str(relay)
+            bytemsg = bytemsg + str(angvel) 
         elif angvel >= 10:
-            bytemsg = bytemsg + '0' + str(angvel) + str(relay)
+            bytemsg = bytemsg + '0' + str(angvel)
         else:
-            bytemsg = bytemsg + '00' + str(angvel) + str(relay)
+            bytemsg = bytemsg + '00' + str(angvel)
 
+        return bytemsg.encode('utf-8')
+
+    def encodeComm(self, relay):
+        bytemsg = str(relay)
         return bytemsg.encode('utf-8')
 
     ### Control panel ###
@@ -159,10 +167,10 @@ class Capture(QtCore.QThread):
 
     ### Features match ###
     def plotFeatures(self, frame, new_f):
-        cv2.line(frame, (self.lb, self.tb), (self.lb, self.bb), (255,255,0), 2) #bgr
-        cv2.line(frame, (self.rb, self.tb), (self.rb, self.bb), (255,255,0), 2)
-        cv2.line(frame, (self.lb, self.tb), (self.rb, self.tb), (255,255,0), 2)
-        cv2.line(frame, (self.lb, self.bb), (self.rb, self.bb), (255,255,0), 2)
+        cv2.line(frame, (self.vb[0], self.hb[0]), (self.vb[0], self.hb[1]), (255,255,0), 2) #bgr
+        cv2.line(frame, (self.vb[1], self.hb[0]), (self.vb[1], self.hb[1]), (255,255,0), 2)
+        cv2.line(frame, (self.vb[0], self.hb[0]), (self.vb[1], self.hb[0]), (255,255,0), 2)
+        cv2.line(frame, (self.vb[0], self.hb[1]), (self.vb[1], self.hb[1]), (255,255,0), 2)
 
         cv2.circle(frame, (int(self.window[1]), int(self.window[0])), 3, (255,255,0), thickness=-1)
 
@@ -177,7 +185,6 @@ class Capture(QtCore.QThread):
         self.f = cv2.goodFeaturesToTrack(gray1, self.f_count, self.f_res, self.f_dist, useHarrisDetector=True)
         
     def matchFeatures(self, frame):
-        t = time.time()
         gray2 = np.float32(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))[self.edge:(self.height - self.edge), self.edge:(self.width - self.edge)]
         new_f = cv2.goodFeaturesToTrack(gray2, self.f_count, self.f_res, self.f_dist, useHarrisDetector=True)
 
@@ -201,7 +208,7 @@ class Capture(QtCore.QThread):
                 if(dist2 < self.m_dist):
                     matches.append([x0, y0, x1, y1])
 
-        print(len(matches))
+        self.m_count = len(matches)
         dispField = ransac.ransac_init(np.array(matches), self.r_tol)
         dispField = ransac.ransac(np.array(matches), dispField, 2, self.r_tol)
         dispField = ransac.ransac(np.array(matches), dispField, 3, self.r_tol)
@@ -209,40 +216,24 @@ class Capture(QtCore.QThread):
         self.window[0] = self.window[0] + dispField[1]*1.0 #y
         self.window[1] = self.window[1] + dispField[0]*1.0
 
-        self.lb = int(self.window[1]-0.5*self.dist_width)
-        self.rb = int(self.window[1]+0.5*self.dist_width)
-        self.tb = int(self.window[0]-0.5*self.dist_height)
-        self.bb = int(self.window[0]+0.5*self.dist_height)
+        self.vb = [int(self.window[1]-0.5*self.dist_width), int(self.window[1]+0.5*self.dist_width)]
+        self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]+0.5*self.dist_height)]
 
         # Check if exceeds boundary
-        exc = 0
-        if self.tb < 0:
-            print('tb:' + str(self.tb))
-            exc = 1
-            self.window[0] = self.window[0] - self.tb
-            self.bb = self.bb - self.tb
-            self.tb = 0
+        if self.hb[0] < 0:
+            self.window[0] = self.window[0] - self.hb[0]
+
+        elif self.hb[1] >= self.height:
+            self.window[0] = self.window[0] - (self.hb[1] - self.height)
+
+        if self.vb[0] < 0:
+            self.window[1] = self.window[1] - self.vb[0] 
             
-        elif self.bb > self.height:
-            exc = 1
-            print('bb:' + str(self.bb))
-            self.window[0] = self.window[0] - (self.bb - self.height)
-            self.bb = self.height
-            self.tb = self.bb - self.dist_height
-            
-        if self.lb < 0:
-            exc = 1
-            print('lb:' + str(self.lb))
-            self.window[1] = self.window[1] - self.lb 
-            self.rb = self.rb - self.lb
-            self.lb = 0
-            
-        elif self.rb > self.width:
-            exc = 1
-            print('rb:' + str(self.rb))
-            self.window[1] = self.window[1] - (self.rb - self.width)
-            self.rb = self.width
-            self.lb = self.rb - self.dist_width
+        elif self.vb[1] >= self.width:
+            self.window[1] = self.window[1] - (self.vb[1] - self.width)
+
+        self.vb = [int(self.window[1]-0.5*self.dist_width), int(self.window[1]-0.5*self.dist_width) + self.dist_width]
+        self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]-0.5*self.dist_height) + self.dist_height]
 
         self.plotFeatures(frame, new_f)
 
@@ -250,10 +241,6 @@ class Capture(QtCore.QThread):
         for i in range(new_f.shape[0]):
             new_f[i][0][0] = new_f[i][0][0] - self.edge
             new_f[i][0][1] = new_f[i][0][1] - self.edge
-
-        elapsed = time.time() - t
-        print(elapsed)
-        ###Timing over###
         
         self.f = new_f
 
@@ -264,7 +251,7 @@ class Capture(QtCore.QThread):
         cap.set(4, self.height)
         cap.set(6, 30)
 
-        # Serial communication
+        # Initialize serial communication
         txt = self.ser.readline().decode('utf-8') # clear serial buffer
         cov = self.encodeCovariance([self.q_angle, self.q_bias, self.r_measure])
         self.ser.write(cov)
@@ -272,54 +259,88 @@ class Capture(QtCore.QThread):
         print("Q_angle, Q_bias, R_measure:") # ensure covariances to be successfully set
         print(txt)
 
-        # Feature match initialization
-        ret, frame = cap.read()
-        self.matchFeaturesInit(frame)
+        # Populate data
+        i = 0
+        while i < (self.r_sample - 1):
+            print(i)
+            comm_msg = self.encodeComm(self.relay)
+            self.ser.write(comm_msg)
+            txt = self.ser.readline()
+            if(txt): #Successfully received
+                ret, self.bench[self.r_sample-i-1] = cap.read()
+                values = txt.decode('utf-8').split(',')
+                self.theta[self.r_sample-i-1] = float(values[0])%180
+                self.roll[self.r_sample-i-1] = float(values[1])
+                self.pitch[self.r_sample-i-1] = float(values[2])
+                i = i + 1
+
+            else:
+                print(":(")
+
+        t = time.time()
+        self.matchFeaturesInit(self.bench[1])
         
+        # Start main flow
         while 1:
-            ret, frame = cap.read()
-            comm_msg = self.encodeComm(self.relay, self.angvel)
+            comm_msg = self.encodeComm(self.relay)
             self.ser.write(comm_msg)
             txt = self.ser.readline()
             if(txt):
-                # Retrieve arduino data
+                
+                elapsed = time.time() - t
+                #print(elapsed)
+                t = time.time()
+
+                #(1) Collect data & Store into waiting line
+                ret, self.bench[0] = cap.read()
                 values = txt.decode('utf-8').split(',')
-                #print(self.displayOpt)
-                self.theta = float(values[0])%180
-                self.roll = float(values[1])
-                self.pitch = float(values[2])
-                dz = self.findZ(self.theta)
+                self.theta[0] = float(values[0])%180
+                self.roll[0] = float(values[1])
+                self.pitch[0] = float(values[2])
 
-                # Warp first
-                H = self.findHomography(-self.roll, self.pitch, 0., np.array([[0.], [dz - 13.5], [0.]])) #13.5-z
-                warp = cv2.warpPerspective(frame, H, (self.width, self.height))
+                #(2) Spline calculation
+                
+                #(3) Warp
+                dz = self.findZ(self.theta[self.r_sample - 1])
+                H = self.findHomography(-self.roll[self.r_sample - 1], self.pitch[self.r_sample - 1], 0., np.array([[0.], [dz - 13.5], [0.]])) #13.5-z
+                warped = cv2.warpPerspective(self.bench[self.r_sample - 1], H, (self.width, self.height))
 
-                # Find features and crop
-                self.matchFeatures(warp)
+                #(4) Find features and crop
+                
+                self.matchFeatures(warped)
+                crop = warped[self.hb[0]:self.hb[1], self.vb[0]:self.vb[1], :]
 
-                # Final output
-                crop = warp[self.tb:self.bb, self.lb:self.rb, :]
+                #(5) Final display
                 if self.displayOpt == True:
                     rgbImage = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                    rgbImage = cv2.resize(rgbImage, (960, 720))
                     
                 else:
-                    rgbImage = cv2.cvtColor(warp, cv2.COLOR_BGR2RGB)
-
+                    rgbImage = cv2.cvtColor(warped, cv2.COLOR_BGR2RGB)
+                    
+                rgbImage = cv2.resize(rgbImage, (960,720))
                 convertToQtFormat = QImage(rgbImage.data, rgbImage.shape[1], rgbImage.shape[0], QImage.Format_RGB888)
                 self.changePixmap.emit(convertToQtFormat)
+
+                #(6) Push bench frames & sensor data
+                for i in range(self.r_sample - 1):
+                    self.bench[self.r_sample - i - 1] = self.bench[self.r_sample - i - 2]
+                    self.theta[self.r_sample - i - 1] = self.theta[self.r_sample - i - 2]
+                    self.roll[self.r_sample - i - 1] = self.roll[self.r_sample - i - 2]
+                    self.pitch[self.r_sample - i - 1] = self.pitch[self.r_sample - i - 2]
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     cap.release()
 
+            else:
+                print(";(")
+        
 class UI(QMainWindow):
 
     def __init__(self):
         super().__init__()
         self.initUI()
         self.showMaximized()
-        self.showContent = False
-
+        
     def setImage(self, image):
         self.videostream.setPixmap(QPixmap.fromImage(image))
 
@@ -330,10 +351,11 @@ class UI(QMainWindow):
         self.setGeometry(100, 100, 1200, 960) # x-position, y-position, width, height
         self.setWindowTitle('Claw-Wheel Video Stabilization')
 
-         #universal fonts
+        #universal font
         font = QFont()
         font.setFamily("Calibri")
         font.setPointSize(16)
+        self.setFont(font)
 
         # Video stream window "label"
         self.videostream = QLabel(self)
@@ -344,25 +366,21 @@ class UI(QMainWindow):
         # Port selection
         self.PortInput = QPlainTextEdit("COM28", self)
         self.PortInput.setGeometry(QtCore.QRect(10, 10, 120, 40))
-        self.PortInput.setFont(font)
 
         # Connect button
         ConnButton = QPushButton("CONNECT", self)
         ConnButton.setGeometry(QtCore.QRect(150, 10, 120, 40))
         ConnButton.clicked.connect(self.ConnClicked)
-        ConnButton.setFont(font)
 
         # Relay button
         RelayButton = QPushButton("RELAY", self)
         RelayButton.setGeometry(QtCore.QRect(290, 10, 120, 40))
         RelayButton.clicked.connect(self.RelayClicked)
-        RelayButton.setFont(font)
 
         # Velocity label & slider
         self.VelLabel = QLabel(self)
         self.VelLabel.setGeometry(QtCore.QRect(10, 70, 200, 40))
         self.VelLabel.setText("Angular Velocity: 0")
-        self.VelLabel.setFont(font)
         
         VelSlider = QSlider(QtCore.Qt.Horizontal, self)
         VelSlider.setGeometry(250, 60, 240, 60)
@@ -375,19 +393,15 @@ class UI(QMainWindow):
         VelSlider.valueChanged[int].connect(self.SetVelocity)
 
         # Show options
-       
         self.ShowCrop = QRadioButton('Show cropped', self)
         self.ShowCrop.setGeometry(QtCore.QRect(250, 120, 200, 40))
-        self.ShowCrop.setFont(font)
         self.ShowCrop.toggle()  
         self.ShowCrop.toggled.connect(self.CropChecked)
         
         self.ShowOrig = QRadioButton('Show original', self)
         self.ShowOrig.setGeometry(QtCore.QRect(10, 120, 200, 40))
-        self.ShowOrig.setFont(font)
         self.ShowOrig.toggle()  
         self.ShowOrig.toggled.connect(self.OrigChecked)
- 
 
         # Cropping motion control
         # WASD
@@ -395,86 +409,91 @@ class UI(QMainWindow):
         CropLabel = QLabel(self)
         CropLabel.setGeometry(QtCore.QRect(1000, 10, 300, 180))
         CropLabel.setText("Cropping motion control")
-        CropLabel.setFont(font)
         CropLabel.setStyleSheet("border: 1px solid black")
         CropLabel.setAlignment(QtCore.Qt.AlignTop)
 
         UpButton = QPushButton("Up", self)
         UpButton.setGeometry(QtCore.QRect(1120, 50, 60, 60))
         UpButton.clicked.connect(self.UpClicked)
-        UpButton.setFont(font)
         
         DownButton = QPushButton("Down", self)
         DownButton.setGeometry(QtCore.QRect(1120, 120, 60, 60))
         DownButton.clicked.connect(self.DownClicked)
-        DownButton.setFont(font)
         
         LeftButton = QPushButton("Left", self)
         LeftButton.setGeometry(QtCore.QRect(1050, 85, 60, 60))
         LeftButton.clicked.connect(self.LeftClicked)
-        LeftButton.setFont(font)
         
         RightButton = QPushButton("Right", self)
         RightButton.setGeometry(QtCore.QRect(1190, 85, 60, 60))
         RightButton.clicked.connect(self.RightClicked)
-        RightButton.setFont(font)
 
         ### Kalman options ###
         # Q_angle, Q_bias, R_measure
         KalmanLabel = QLabel(self)
         KalmanLabel.setGeometry(QtCore.QRect(1000, 210, 300, 180))
         KalmanLabel.setText("Kalman Options \n Q_angle \n \n Q_bias \n \n R_measure")
-        KalmanLabel.setFont(font)
         KalmanLabel.setStyleSheet("border: 1px solid black")
         KalmanLabel.setAlignment(QtCore.Qt.AlignTop)
-        self.QangleInput = QPlainTextEdit("0.1", self)
+        self.QangleInput = QPlainTextEdit("0.01", self)
         self.QangleInput.setGeometry(QtCore.QRect(1160, 240, 120, 40))
-        self.QangleInput.setFont(font)
         self.QbiasInput = QPlainTextEdit("0.003", self)
         self.QbiasInput.setGeometry(QtCore.QRect(1160, 290, 120, 40))
-        self.QbiasInput.setFont(font)
-        self.RmeasureInput = QPlainTextEdit("0.02", self)
+        self.RmeasureInput = QPlainTextEdit("0.005", self) #0.001
         self.RmeasureInput.setGeometry(QtCore.QRect(1160, 340, 120, 40))
-        self.RmeasureInput.setFont(font)
 
         ### Spline options ###
         # Roll, pitch sampling ratio
         SplineLabel = QLabel(self)
         SplineLabel.setGeometry(QtCore.QRect(1000, 410, 300, 180))
         SplineLabel.setText("Spline Options (Sampling Ratio) \n Roll \n \n Pitch")
-        SplineLabel.setFont(font)
         SplineLabel.setStyleSheet("border: 1px solid black")
         SplineLabel.setAlignment(QtCore.Qt.AlignTop)
         self.RSampleInput = QPlainTextEdit("10", self)
         self.RSampleInput.setGeometry(QtCore.QRect(1160, 440, 120, 40))
-        self.RSampleInput.setFont(font)
         self.PSampleInput = QPlainTextEdit("10", self)
         self.PSampleInput.setGeometry(QtCore.QRect(1160, 490, 120, 40))
-        self.PSampleInput.setFont(font)
 
         ### Feature detect options ###
         # features count, features resolution, features distance, match distance
         FeatureLabel = QLabel(self)
         FeatureLabel.setGeometry(QtCore.QRect(1000, 610, 300, 300))
         FeatureLabel.setText("Feature Options \n Feature count \n \n Feature res. \n \n Feature dist. \n \n min. Match dist. \n \n Ransac tol.")
-        FeatureLabel.setFont(font)
         FeatureLabel.setStyleSheet("border: 1px solid black")
         FeatureLabel.setAlignment(QtCore.Qt.AlignTop)
-        self.FcountInput = QPlainTextEdit("50", self)
+        self.FcountInput = QPlainTextEdit("100", self) #200
         self.FcountInput.setGeometry(QtCore.QRect(1160, 640, 120, 40))
-        self.FcountInput.setFont(font)
-        self.FresInput = QPlainTextEdit("0.01", self)
+        self.FresInput = QPlainTextEdit("0.001", self)
         self.FresInput.setGeometry(QtCore.QRect(1160, 690, 120, 40))
-        self.FresInput.setFont(font)
-        self.FdistInput = QPlainTextEdit("30", self)
+        self.FdistInput = QPlainTextEdit("50", self)
         self.FdistInput.setGeometry(QtCore.QRect(1160, 740, 120, 40))
-        self.FdistInput.setFont(font)
-        self.MdistInput = QPlainTextEdit("2000", self)
+        self.MdistInput = QPlainTextEdit("3000", self)
         self.MdistInput.setGeometry(QtCore.QRect(1160, 790, 120, 40))
-        self.MdistInput.setFont(font)
-        self.RtolInput = QPlainTextEdit("1.25", self)
+        self.RtolInput = QPlainTextEdit("1.1", self)
         self.RtolInput.setGeometry(QtCore.QRect(1160, 840, 120, 40))
-        self.RtolInput.setFont(font)
+
+        ### State labels ###
+        StateLabel = QLabel(self)
+        StateLabel.setGeometry(QtCore.QRect(580, 70, 400, 40))
+        StateLabel.setText("Theta          Roll              Pitch           Matches")
+        self.ThetaLabel = QLabel(self)
+        self.ThetaLabel.setGeometry(QtCore.QRect(580, 120, 80, 40))
+        self.ThetaLabel.setText("0")
+        self.RollLabel = QLabel(self)
+        self.RollLabel.setGeometry(QtCore.QRect(680, 120, 80, 40))
+        self.RollLabel.setText("0")
+        self.PitchLabel = QLabel(self)
+        self.PitchLabel.setGeometry(QtCore.QRect(780, 120, 80, 40))
+        self.PitchLabel.setText("0")
+        self.MatchLabel = QLabel(self)
+        self.MatchLabel.setGeometry(QtCore.QRect(880, 120, 80, 40))
+        self.MatchLabel.setText("0")
+
+    def Update(self):
+        self.ThetaLabel.setText(str(self.video_thread.theta[0]))
+        self.RollLabel.setText(str(self.video_thread.roll[0]))
+        self.PitchLabel.setText(str(self.video_thread.pitch[0]))
+        self.MatchLabel.setText(str(self.video_thread.m_count))
 
     def ConnClicked(self):
         print("connect")
@@ -499,6 +518,10 @@ class UI(QMainWindow):
         self.video_thread.setArgs(Q_angle, Q_bias, R_measure, R_sample, P_sample, F_count, F_res, F_dist, M_dist, R_tol)
         self.video_thread.DisplayControl(False)
 
+        self.SysSerialTimer = QtCore.QTimer()
+        self.SysSerialTimer.timeout.connect(self.Update)
+        self.SysSerialTimer.start(50)
+        
     def RelayClicked(self):
         self.video_thread.RelayControl()
 
@@ -510,11 +533,9 @@ class UI(QMainWindow):
     def CropChecked(self, value):
         if self.ShowCrop.isChecked():
             self.ShowOrig.setChecked(False)
-            
         else:
             self.ShowOrig.setChecked(True)
-            
-            
+
     def OrigChecked(self, value):
         if self.ShowOrig.isChecked():
             self.ShowCrop.setChecked(False)
