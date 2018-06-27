@@ -13,6 +13,8 @@ LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 #define RelayPin1 7
 #define ExtResetPin 23
 int res = 113246;
+byte relay = 0;
+int angvel = 0;
 
 Kalman kalmanX;
 Kalman kalmanY;
@@ -72,7 +74,6 @@ double FL_PWMvalue = 0, FR_PWMvalue = 0, RL_PWMvalue = 0, RR_PWMvalue = 0, WL_PW
 float FL_Angular_V_Tar = 0, FR_Angular_V_Tar = 0, RL_Angular_V_Tar = 0, RR_Angular_V_Tar = 0;
 float Angular_V_Tar = 0;
 float Angular_V_Add = 0.1;
-int vel = 0;
 
 PID FR_PID(&FR_Feed, &FR_PWMvalue, &set[0], 0, 0, 0, DIRECT);
 PID FL_PID(&FL_Feed, &FL_PWMvalue, &set[1], 0, 0, 0, DIRECT);
@@ -121,20 +122,20 @@ void setup() {
     while(1){} // Block progress
   }
   
-  byte cov[9]; 
+  byte start_msg[12]; 
   while(1){
-    if (Serial.available()==9){
-      for (int i = 0; i < 9; i++){
-        cov[i] = Serial.read()-'0';
+    if (Serial.available()==12){
+      for (int i = 0; i < 12; i++){
+        start_msg[i] = Serial.read()-'0';
       }
      break;
     }
   }//waiting for start signal
   
   // Set Kalman covariances: "152" = 1.5e(-2)
-  double Q_angle = (cov[0] + 0.1*cov[1])/pow(10, cov[2]);
-  double Q_bias = (cov[3] + 0.1*cov[4])/pow(10, cov[5]);
-  double R_measure = (cov[6] + 0.1*cov[7])/pow(10, cov[8]);
+  double Q_angle = (start_msg[0] + 0.1*start_msg[1])/pow(10, start_msg[2]);
+  double Q_bias = (start_msg[3] + 0.1*start_msg[4])/pow(10, start_msg[5]);
+  double R_measure = (start_msg[6] + 0.1*start_msg[7])/pow(10, start_msg[8]);
   kalmanX.setQangle(Q_angle);
   kalmanY.setQangle(Q_angle);
   kalmanX.setQbias(Q_bias);
@@ -142,7 +143,10 @@ void setup() {
   kalmanX.setRmeasure(R_measure);
   kalmanY.setRmeasure(R_measure);
 
-  Serial.print(Q_angle, 4);Serial.print(",");Serial.print(Q_bias, 4);Serial.print(",");Serial.println(R_measure, 4);
+  angvel = start_msg[9]*100 + start_msg[10]*10 + start_msg[11];
+  lcd.print(angvel);
+
+  Serial.print(Q_angle, 4);Serial.print(",");Serial.print(Q_bias, 4);Serial.print(",");Serial.print(R_measure, 4);Serial.print(",");Serial.println(angvel);
   /*if(Q_angle*Q_bias*R_measure==0){
     while(1){} // Block progress
   }*/
@@ -203,12 +207,7 @@ void loop() {
 
   /* 4. Send via serial */
   if(Serial.available()){
-    byte rel = Serial.read()-'0';
-    /*int bts = Serial.available();
-    byte comm[4];
-    for (int i = 0; i < 4; i++){
-      comm[i] = Serial.read()-'0';
-    }*/
+    relay = Serial.read()-'0';
 
     /*Serial.print(count[0]);Serial.print(",");
     Serial.print(count[1]);Serial.print(",");
@@ -218,21 +217,6 @@ void loop() {
     Serial.print(count[5]);Serial.print(",");*/
     Serial.print(pos_angle);   Serial.print(",");
     Serial.print(roll_predict);Serial.print(",");Serial.println(pitch_predict);
-    
-    /*vel = comm[1]*100 + comm[2]*10 + comm[3];
-    lcd.setCursor(0,0); lcd.print(vel);lcd.print("  ");*/
-    if(rel==0){
-      digitalWrite(RelayPin0, LOW);
-      digitalWrite(RelayPin1, LOW);
-    }
-    else{
-      digitalWrite(RelayPin0, HIGH);
-      digitalWrite(RelayPin1, HIGH);
-    }
-    /*while(bts){
-      Serial.read(); //clear serial buffer
-      bts--;
-    }*/
  }
   
   /* 5. Calculate PID */
@@ -243,12 +227,20 @@ void loop() {
   WR_Feed = count[4];
   WL_Feed = count[5];
 
-  if(grad < vel){
-    grad++;
+  if(relay==0){
+    digitalWrite(RelayPin0, LOW);
+    digitalWrite(RelayPin1, LOW);
+    grad = 0;
   }
-  else if(grad > vel){
-    grad--;
+  else{
+    digitalWrite(RelayPin0, HIGH);
+    digitalWrite(RelayPin1, HIGH);
+    if(grad < angvel){
+      grad++;
+    }
   }
+    
+  
   lcd.setCursor(0,1);lcd.print(grad);lcd.print("  ");
   
   set[0] += grad;
