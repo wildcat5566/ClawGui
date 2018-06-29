@@ -1,7 +1,7 @@
 import numpy as np
 
 class Spline():
-    def __init__(self, t):
+    def __init__(self, t, alpha):
         self.t = t
         self.df1 = 0
         A = np.zeros((12, 12),dtype=float)
@@ -40,7 +40,7 @@ class Spline():
 
         #eqn 7: reduce acceleration at ending with a reduction ratio alpha.
         #       f"23(t3) = 2a22+6a23t = alpha*f"23(t2) = alpha*2a22, 2(1-alpha)a22+6a23t=0
-        alpha = 1.0
+        #alpha = 0
         A[7][10] = 1 - alpha
         A[7][11] = 6*(t-1)
 

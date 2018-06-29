@@ -21,7 +21,7 @@ class Capture(QtCore.QThread):
         self.height = 600
         self.dist_width = 480
         self.dist_height = 360
-        self.edge = 20
+        self.edge = 50
         
         self.f = None
         self.window = [self.height * 0.5, self.width * 0.5]
@@ -47,6 +47,7 @@ class Capture(QtCore.QThread):
         self.r_measure = 0
 
         self.s_sample = 0
+        self.s_alpha = 0
         self.bench = None
 
         self.f_count = 0
@@ -54,10 +55,13 @@ class Capture(QtCore.QThread):
         self.f_dist = 0
         self.m_dist = 0
         self.r_tol = 0
+        self.r_ite = 0
         
         self.theta = None
         self.roll = None
         self.pitch = None
+        self.dx = None
+        self.dy = None
         
         self.t = 0
         self.r = 0
@@ -104,26 +108,30 @@ class Capture(QtCore.QThread):
         return(H)
 
     ### Serial communication related ###
-    def setArgs(self, Q_angle, Q_bias, R_measure, S_sample, F_count, F_res, F_dist, M_dist, R_tol, angvel):
+    def setArgs(self, Q_angle, Q_bias, R_measure, S_sample, S_alpha, F_count, F_res, F_dist, M_dist, R_tol, R_ite, angvel):
         self.q_angle = float(Q_angle)
         self.q_bias = float(Q_bias)
         self.r_measure = float(R_measure)
-
         self.s_sample = int(S_sample)
-        self.bench = np.zeros((self.s_sample * 2, self.height, self.width, 3),dtype=np.uint8)
-        self.theta = np.zeros((self.s_sample * 3 + 1))
-        self.roll = np.zeros((self.s_sample * 3 + 1))
-        self.pitch = np.zeros((self.s_sample * 3 + 1))
-
+        self.s_alpha = float(S_alpha)
         self.f_count = int(F_count)
         self.f_res = float(F_res)
         self.f_dist = int(F_dist)
         self.m_dist = int(M_dist)
         self.r_tol = float(R_tol)
+        self.r_ite = int(R_ite)
         self.m_count = 0
-
         self.angvel = angvel
+
+        self.theta = np.zeros((self.s_sample * 3 + 1))
+        self.roll = np.zeros((self.s_sample * 3 + 1))
+        self.pitch = np.zeros((self.s_sample * 3 + 1))
         
+        self.dx = np.zeros((self.s_sample))
+        self.dy = np.zeros((self.s_sample))
+
+        self.bench = np.zeros((self.s_sample * 2, self.height, self.width, 3),dtype=np.uint8)
+
     def encodeStartMsg(self, angles, angvel):
         bytemsg = ''
         
@@ -145,7 +153,10 @@ class Capture(QtCore.QThread):
         return bytemsg.encode('utf-8')
 
     def encodeMsg(self, relay):
-        bytemsg = str(relay)
+        if(relay==1):
+            bytemsg = '1'
+        else:
+            bytemsg = '12'
         return bytemsg.encode('utf-8')
 
     ### Control panel ###
@@ -167,15 +178,12 @@ class Capture(QtCore.QThread):
         self.window[0] = self.window[0] + vertical*10
         self.window[1] = self.window[1] + horizontal*10
 
-    ### Features match ###
-    def plotFeatures(self, frame, new_f, exc):
+    ### Drawing Functions ###
+    def plotFeatures(self, frame, new_f):
         bound_col = []
         for i in range(4):
-            if exc[i]==0:
-                bound_col.append((255,255,0)) #bgr
-            else:
-                bound_col.append((0,0,255))
-                
+            bound_col.append((255,255,0)) #bgr
+
         cv2.line(frame, (self.vb[0],   self.hb[0]),   (self.vb[1]-1, self.hb[0]  ), bound_col[0], 2)
         cv2.line(frame, (self.vb[0],   self.hb[1]-1), (self.vb[1]-1, self.hb[1]-1), bound_col[1], 2)
         cv2.line(frame, (self.vb[0],   self.hb[0]),   (self.vb[0],   self.hb[1]  ), bound_col[2], 2) 
@@ -196,16 +204,15 @@ class Capture(QtCore.QThread):
         cv2.line(frame, (self.vb[1]-1, self.hb[0]),   (self.vb[1]-1, self.hb[1]-1), (0,0,0), 1)
         cv2.circle(frame, (int(self.window[1]), int(self.window[0])), 1, (0,0,0), thickness=-1)
 
+    ### Feature matching ###
     def matchFeaturesInit(self, frame):
         gray = np.float32(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))[self.edge:(self.height - self.edge), self.edge:(self.width - self.edge)]
         self.f = cv2.goodFeaturesToTrack(gray, self.f_count, self.f_res, self.f_dist, useHarrisDetector=True)
         
-    def matchFeatures(self, frame):
-        
+    def matchFeatures(self, frame): # Returns displacement field
         gray = np.float32(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))[self.edge:(self.height - self.edge), self.edge:(self.width - self.edge)]
         new_f = cv2.goodFeaturesToTrack(gray, self.f_count, self.f_res, self.f_dist, useHarrisDetector=True)
-
-        #avoid boundaries
+        # Shift to avoid boundaries
         for i in range(self.f.shape[0]):
             self.f[i][0][0] = self.f[i][0][0] + self.edge
             self.f[i][0][1] = self.f[i][0][1] + self.edge
@@ -213,7 +220,8 @@ class Capture(QtCore.QThread):
         for i in range(new_f.shape[0]):
             new_f[i][0][0] = new_f[i][0][0] + self.edge
             new_f[i][0][1] = new_f[i][0][1] + self.edge
-       
+
+        #(1) Match between consequential frames
         matches = []
         for i in range(self.f.shape[0]):
             for j in range(i, new_f.shape[0]):
@@ -225,41 +233,14 @@ class Capture(QtCore.QThread):
                 if(dist2 < self.m_dist):
                     matches.append([x0, y0, x1, y1])
 
+        #(2) Find displacement field with Ransac
         self.m_count = len(matches)
         self.dispField = ransac.ransac_init(np.array(matches), self.r_tol)
-        self.dispField = ransac.ransac(np.array(matches), self.dispField, 2, self.r_tol)
-        self.dispField = ransac.ransac(np.array(matches), self.dispField, 3, self.r_tol)
-    
-        self.window[0] = self.window[0] + self.dispField[1]*1.0 #y
-        self.window[1] = self.window[1] + self.dispField[0]*1.0
-
-        self.vb = [int(self.window[1]-0.5*self.dist_width), int(self.window[1]+0.5*self.dist_width)]
-        self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]+0.5*self.dist_height)]
-
-        # Check if exceeds boundary
-        exc = [0,0,0,0]
-        if self.hb[0] < 0: #up
-            self.window[0] = self.window[0] - self.hb[0]
-            exc[0] = 1
-
-        elif self.hb[1] >= self.height: #down
-            self.window[0] = self.window[0] - (self.hb[1] - self.height)
-            exc[1] = 1
-
-        if self.vb[0] < 0: #left
-            self.window[1] = self.window[1] - self.vb[0]
-            exc[2] = 1
-            
-        elif self.vb[1] >= self.width: #right
-            self.window[1] = self.window[1] - (self.vb[1] - self.width)
-            exc[3] = 1
-
-        self.vb = [int(self.window[1]-0.5*self.dist_width), int(self.window[1]-0.5*self.dist_width) + self.dist_width]
-        self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]-0.5*self.dist_height) + self.dist_height]
-
-        self.plotFeatures(frame, new_f, exc)
-
-        # Recover edge shift
+        for i in range(1, self.r_ite + 1):
+            self.dispField = ransac.ransac(np.array(matches), self.dispField, i, self.r_tol)
+        
+        #self.plotFeatures(frame, new_f)
+        # Recover boundary shift
         for i in range(new_f.shape[0]):
             new_f[i][0][0] = new_f[i][0][0] - self.edge
             new_f[i][0][1] = new_f[i][0][1] - self.edge
@@ -284,41 +265,35 @@ class Capture(QtCore.QThread):
 
         # Populate data: IMU
         i = 0
-        x_motion = 0
-        y_motion = 0
-        
         while i < (self.s_sample*2):
             msg = self.encodeMsg(self.relay)
             self.ser.write(msg)
-            txt = self.ser.readline()
-            if(txt): 
+            txt = self.ser.readline() 
+            if(txt):
+                
                 values = txt.decode('utf-8').split(',')
                 self.theta[i] = float(values[0])%180
                 self.roll[i] = float(values[1])
                 self.pitch[i] = float(values[2])
                 ret, frame = cap.read()
+                
                 if i==0:
                     self.matchFeaturesInit(frame)
-
-                self.matchFeatures(frame)
-                x_motion = x_motion + self.dispField[0]
-                y_motion = y_motion + self.dispField[1]
-
+                    
                 if i >= self.s_sample:
                     self.bench[i - self.s_sample] = frame
-                    
+                    self.matchFeatures(frame)
+
                 i = i + 1 # Proceed if txt successfully received; else retry
         
         t = time.time()
-        #self.matchFeaturesInit(self.bench[0]) # self.bench[0]
-        x_grad = int(x_motion / (self.s_sample*2))
-        y_grad = int(y_motion / (self.s_sample*2))
-        x_motion = 0
-        y_motion = 0
 
         # Initialize spline objects & targets
-        pitch_spline = spline.Spline(self.s_sample)
+        pitch_spline = spline.Spline(self.s_sample, self.s_alpha)
+        roll_spline = spline.Spline(self.s_sample, self.s_alpha)
+        
         pitch_tar = pitch_spline.findSpline(self.pitch[0], self.pitch[0], self.pitch[self.s_sample], self.pitch[2*self.s_sample - 1])
+        roll_tar = roll_spline.findSpline(self.roll[0], self.roll[0], self.roll[self.s_sample], self.roll[2*self.s_sample - 1])
 
         # Start main flow
         nth = 0
@@ -326,10 +301,9 @@ class Capture(QtCore.QThread):
 
         while 1:
             msg = self.encodeMsg(self.relay)
-            self.ser.write(msg)
+            self.ser.write(b'1')
             txt = self.ser.readline()
             if(txt):
-
                 #(1) Collect data & Store into waiting line
                 values = txt.decode('utf-8').split(',')
                 self.t = float(values[0])%180
@@ -341,42 +315,57 @@ class Capture(QtCore.QThread):
                 self.pitch[2*self.s_sample + nth] = float(values[2])
                 ret, frame = cap.read()
                 self.bench[self.s_sample + nth] = frame
+                ### Save screenshot ###
+                fname = '../data/0629/unstab/' + str(fcount) + '.jpg'
+                cv2.imwrite(fname, self.bench[nth])
 
                 #(2) Warp based on spline targets
-                #roll_bias =  - self.roll[self.s_sample + nth] + roll_tar[nth]
-                roll_bias = - self.roll[self.s_sample + nth]
+                roll_bias = - self.roll[self.s_sample + nth] + roll_tar[nth]
                 pitch_bias = self.pitch[self.s_sample + nth] - pitch_tar[nth]
 
-                #unstab = self.bench[nth]
-                #fname = '../data/0627/unstab/' + str(fcount) + '.jpg'
-                #cv2.imwrite(fname, self.bench[nth])
-                
                 dz = self.findZ(self.theta[self.s_sample + nth])
-                H = self.findHomography(roll_bias, pitch_bias, 0., np.array([[0.], [dz - 13.5], [0.]])) #13.5-z
+                H = self.findHomography(roll_bias, pitch_bias, 0., np.array([[0.], [13.5 - dz], [0.]])) #13.5-z
                 warped = cv2.warpPerspective(self.bench[nth], H, (self.width, self.height))
 
                 #(3) Find & track features
                 self.matchFeatures(warped)
-                x_motion = x_motion + self.dispField[0]
-                y_motion = y_motion + self.dispField[1]
+                self.window[0] = self.window[0] + self.dispField[1]*1.0 #y
+                self.window[1] = self.window[1] + self.dispField[0]*1.0
 
                 #(4) cover inherent motion in pixelwise
                 # pitch
-                
-                self.window[0] = self.window[0] - self.d * self.sin(pitch_bias)
-                self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]+0.5*self.dist_height)]
+                #self.window[0] = self.window[0] - self.d * self.sin(pitch_bias)
+                #self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]+0.5*self.dist_height)]
 
-                self.window[1] = self.window[1] - x_grad
-                self.vb = [int(self.window[1]-0.5*self.dist_width), int(self.window[1]+0.5*self.dist_width)]
-                self.window[0] = self.window[0] - y_grad
-                self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]+0.5*self.dist_height)]
+                #(5) Check if exceeds boundary
+                exc = [0,0,0,0]
+                if self.window[0] - 0.5*self.dist_height <= 0: #up
+                    self.window[0] = 0.5*self.dist_height
+                    exc[0] = 1
 
-                #(5) Final crop
-                crop = warped[self.hb[0]:self.hb[1], self.vb[0]:self.vb[1], :]
-                #fname = '../data/0627/stab/' + str(fcount) + '.jpg'
-                #cv2.imwrite(fname, crop)
+                elif self.window[0]+0.5*self.dist_height >= self.height: #down
+                    self.window[0] = self.height - (0.5*self.dist_height)
+                    exc[1] = 1
 
-                #(6) Final display
+                if (self.window[1]-0.5*self.dist_width) <= 0: #left
+                    self.window[1] = 0.5*self.dist_width
+                    exc[2] = 1
+            
+                elif (self.window[1]+0.5*self.dist_width) >= self.width: #right
+                    self.window[1] = self.width - (0.5*self.dist_width)
+                    exc[3] = 1
+
+                self.vb = [int(self.window[1]-0.5*self.dist_width), int(self.window[1]-0.5*self.dist_width) + self.dist_width]
+                self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]-0.5*self.dist_height) + self.dist_height]
+
+                #(6) Final crop
+                crop = warped[self.hb[0]:(self.hb[0]+self.dist_height),
+                              self.vb[0]:(self.vb[0]+self.dist_width), :]
+                ### Save screenshot ###
+                fname = '../data/0629/stab/' + str(fcount) + '.jpg'
+                cv2.imwrite(fname, crop)
+
+                #(7) Final display
                 self.plotBound(warped)
                 if self.displayOpt == False:
                     dispImage = cv2.cvtColor(warped, cv2.COLOR_BGR2RGB)
@@ -387,17 +376,13 @@ class Capture(QtCore.QThread):
                 convertToQtFormat = QImage(dispImage.data, dispImage.shape[1], dispImage.shape[0], QImage.Format_RGB888) #QImage.Format_Indexed8
                 self.changePixmap.emit(convertToQtFormat)
                 
-                #(7) Update & push bench frames & sensor data
+                #(8) Update & push bench frames & sensor data
                 if nth == self.s_sample - 1:
                     # Spline nodes
                     pitch_tar = pitch_spline.findSpline(self.pitch[0],               self.pitch[self.s_sample],
                                                         self.pitch[self.s_sample*2], self.pitch[self.s_sample*3 - 1])
-                    
-                    x_grad = int(x_motion / self.s_sample)
-                    y_grad = int(y_motion / self.s_sample)
-
-                    x_motion = 0
-                    y_motion = 0
+                    roll_tar = roll_spline.findSpline(self.roll[0],               self.roll[self.s_sample],
+                                                      self.roll[self.s_sample*2], self.roll[self.s_sample*3 - 1])
 
                     for i in range(self.s_sample*2):
                         self.theta[i] = self.theta[i+self.s_sample]
@@ -436,7 +421,7 @@ class UI(QMainWindow):
         #universal font
         font = QFont()
         font.setFamily("Calibri")
-        font.setPointSize(16)
+        font.setPointSize(14)
         self.setFont(font)
 
         # Video stream window "label"
@@ -446,7 +431,7 @@ class UI(QMainWindow):
 
         ### Control panel ###
         # Port selection
-        self.PortInput = QPlainTextEdit("COM28", self)
+        self.PortInput = QPlainTextEdit("COM4", self)
         self.PortInput.setGeometry(QtCore.QRect(10, 10, 120, 40))
 
         # Connect button
@@ -527,30 +512,34 @@ class UI(QMainWindow):
         ### Spline options ###
         # Roll, pitch sampling ratio
         SplineLabel = QLabel(self)
-        SplineLabel.setGeometry(QtCore.QRect(1000, 410, 300, 180))
-        SplineLabel.setText("Spline Options \n Sampling ratio")
+        SplineLabel.setGeometry(QtCore.QRect(1000, 410, 300, 130))
+        SplineLabel.setText("Spline Options \n Sampling ratio \n \n alpha")
         SplineLabel.setStyleSheet("border: 1px solid black")
         SplineLabel.setAlignment(QtCore.Qt.AlignTop)
         self.SplineSampleInput = QPlainTextEdit("10", self)
         self.SplineSampleInput.setGeometry(QtCore.QRect(1160, 440, 120, 40))
+        self.SplineAlphaInput = QPlainTextEdit("0", self)
+        self.SplineAlphaInput.setGeometry(QtCore.QRect(1160, 490, 120, 40))
 
         ### Feature detect options ###
         # features count, features resolution, features distance, match distance
         FeatureLabel = QLabel(self)
-        FeatureLabel.setGeometry(QtCore.QRect(1000, 610, 300, 300))
-        FeatureLabel.setText("Feature Options \n Feature count \n \n Feature res. \n \n Feature dist. \n \n min. Match dist. \n \n Ransac tol.")
+        FeatureLabel.setGeometry(QtCore.QRect(1000, 560, 300, 350))
+        FeatureLabel.setText("Feature Options \n Feature count \n \n Feature res. \n \n Feature dist. \n \n min. Match dist. \n \n Ransac tol. \n \n Ransac ite.'s")
         FeatureLabel.setStyleSheet("border: 1px solid black")
         FeatureLabel.setAlignment(QtCore.Qt.AlignTop)
-        self.FcountInput = QPlainTextEdit("50", self) #200
-        self.FcountInput.setGeometry(QtCore.QRect(1160, 640, 120, 40))
+        self.FcountInput = QPlainTextEdit("100", self) #50
+        self.FcountInput.setGeometry(QtCore.QRect(1160, 590, 120, 40))
         self.FresInput = QPlainTextEdit("0.001", self)
-        self.FresInput.setGeometry(QtCore.QRect(1160, 690, 120, 40))
+        self.FresInput.setGeometry(QtCore.QRect(1160, 640, 120, 40))
         self.FdistInput = QPlainTextEdit("30", self)
-        self.FdistInput.setGeometry(QtCore.QRect(1160, 740, 120, 40))
+        self.FdistInput.setGeometry(QtCore.QRect(1160, 690, 120, 40))
         self.MdistInput = QPlainTextEdit("3000", self)
-        self.MdistInput.setGeometry(QtCore.QRect(1160, 790, 120, 40))
+        self.MdistInput.setGeometry(QtCore.QRect(1160, 740, 120, 40))
         self.RtolInput = QPlainTextEdit("1.1", self)
-        self.RtolInput.setGeometry(QtCore.QRect(1160, 840, 120, 40))
+        self.RtolInput.setGeometry(QtCore.QRect(1160, 790, 120, 40))
+        self.RiteInput = QPlainTextEdit("3", self)
+        self.RiteInput.setGeometry(QtCore.QRect(1160, 840, 120, 40))
 
         ### State labels ###
         StateLabel = QLabel(self)
@@ -588,13 +577,16 @@ class UI(QMainWindow):
         Q_bias = self.QbiasInput.toPlainText()
         R_measure = self.RmeasureInput.toPlainText()
         S_sample = self.SplineSampleInput.toPlainText()
+        S_alpha = self.SplineAlphaInput.toPlainText()
         F_count = self.FcountInput.toPlainText()
         F_res = self.FresInput.toPlainText()
         F_dist = self.FdistInput.toPlainText()
         M_dist = self.MdistInput.toPlainText()
         R_tol = self.RtolInput.toPlainText()
+        R_ite = self.RiteInput.toPlainText()
         
-        self.video_thread.setArgs(Q_angle, Q_bias, R_measure, S_sample, F_count, F_res, F_dist, M_dist, R_tol, self.angvel)
+        self.video_thread.setArgs(Q_angle, Q_bias, R_measure, S_sample, S_alpha,
+                                  F_count, F_res, F_dist, M_dist, R_tol, R_ite, self.angvel)
         self.video_thread.DisplayControl(False)
 
         self.SysSerialTimer = QtCore.QTimer()

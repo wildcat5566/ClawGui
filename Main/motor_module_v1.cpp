@@ -46,9 +46,12 @@ void MotorObject::sendPwm(int pwm){
     for(int i = 0; i < 3; i ++){
       Wire.write(hex[i]);
     }
-    Wire.endTransmission();
-    delay(1);
+    uint8_t end_status = Wire.endTransmission(false);
+    while(end_status != 0){
+      uint8_t end_status = Wire.endTransmission(false);
+    }
 }
+
 void MotorObject::setSlaveAddress(uint8_t addr){
   address = addr;
 }
