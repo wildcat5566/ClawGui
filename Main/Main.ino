@@ -44,7 +44,7 @@ int16_t ax, ay, az, gx, gy, gz;
 float gyro_sen = 131.0;
 float acc_sen = 16384.0;
 
- 
+/* 
 //Red group
 float ax_offset = 80.00;
 float ay_offset = -375.00;
@@ -52,7 +52,7 @@ float az_offset = 17846.00 - acc_sen;
 float gx_offset = -478.00;
 float gy_offset = 250.00;
 float gz_offset = 18.00;
-/*
+*/
 
 //Blue group
 float ax_offset = -1188.00;
@@ -61,7 +61,7 @@ float az_offset = 24623.00 - acc_sen;
 float gx_offset = -178.00;
 float gy_offset = 82.00;
 float gz_offset = -48.00;
-*/
+
 //******PID Settings******//
 double Timer3_HZ = 100.0;
 
@@ -270,12 +270,13 @@ void loop() {
   WL_PID.Compute();
 
   /* 6. Send PWM to motors */
-  /*FR.sendPwm(FR_PWMvalue);
-  WR.sendPwm(WR_PWMvalue);
+  FR.sendPwm(FR_PWMvalue);
   RR.sendPwm(RR_PWMvalue);
   RL.sendPwm(RL_PWMvalue);
   FL.sendPwm(FL_PWMvalue);
-  WL.sendPwm(WL_PWMvalue);*/
+  WR.sendPwm(WR_PWMvalue);
+  WL.sendPwm(WL_PWMvalue);
+  
   prev_count[0] = count[0];
   prev_count[1] = count[1];
   prev_count[2] = count[2];

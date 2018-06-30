@@ -9,10 +9,11 @@ def eval(N):
     unstab_means = []
     stab_means = []
     for i in range(N):
-        unstab0 = cv2.imread("../data/0629/unstab/"+str(i)+".jpg")
-        unstab1 = cv2.imread("../data/0629/unstab/"+str(i+1)+".jpg")
-        stab0 = cv2.imread("../data/0629/stab/"+str(i)+".jpg")
-        stab1 = cv2.imread("../data/0629/stab/"+str(i+1)+".jpg")    
+        print(i)
+        unstab0 = cv2.imread("../data/0630/flat1/unstab/"+str(i)+".jpg")
+        unstab1 = cv2.imread("../data/0630/flat1/unstab/"+str(i+1)+".jpg")
+        stab0 = cv2.imread("../data/0630/flat1/stab/"+str(i)+".jpg")
+        stab1 = cv2.imread("../data/0630/flat1/stab/"+str(i+1)+".jpg")    
     
         unstab0 = cv2.cvtColor(unstab0,cv2.COLOR_BGR2GRAY)
         unstab1 = cv2.cvtColor(unstab1,cv2.COLOR_BGR2GRAY)
@@ -29,8 +30,8 @@ def eval(N):
         stab_mag, _ = cv2.cartToPolar(flow[...,0], flow[...,1])
 
         #print(np.mean(unstab_mag), np.mean(stab_mag))
-        unstab_means.append(np.median(unstab_mag))
-        stab_means.append(np.median(stab_mag))
+        unstab_means.append(np.mean(unstab_mag))
+        stab_means.append(np.mean(stab_mag))
 
     ind = np.arange(N)
     width = 0.35
@@ -112,13 +113,14 @@ def video_optflow():
         prvs = next
     
     cap.release()
+
     cv2.destroyAllWindows()
 
 def cleardir():
-    N=len(os.listdir('../data/0629/unstab'))
+    N=len(os.listdir('../data/0630/unstab'))
     for i in range(N):
-        os.remove('../data/0629/unstab/'+str(i)+'.jpg')
-        os.remove('../data/0629/stab/'+str(i)+'.jpg')
+        os.remove('../data/0630/unstab/'+str(i)+'.jpg')
+        os.remove('../data/0630/stab/'+str(i)+'.jpg')
 
 def removeimg(n):
     os.remove('../data/0629/unstab/'+str(n)+'.jpg')
@@ -128,7 +130,7 @@ def removeimg(n):
         os.rename('../data/0629/stab/'+str(i)+'.jpg', '../data/0629/stab/'+str(i-1)+'.jpg')
 
 
-N=len(os.listdir('../data/0629/stab'))
+N=len(os.listdir('../data/0630/flat1/stab'))
 print(N)
 eval(N-2)
 #cleardir()

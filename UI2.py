@@ -24,9 +24,8 @@ class Capture(QtCore.QThread):
         self.edge = 20
         
         self.f = None
-        self.window = [self.height * 0.5, self.width * 0.5]
-        self.vb = [int(self.window[1]-0.5*self.dist_width), int(self.window[1]+0.5*self.dist_width)]
-        self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]+0.5*self.dist_height)]
+        
+        
         self.dispField = [0, 0]
 
         self.K = np.matrix([[756.78768558,   0.        , 629.89805344],
@@ -49,6 +48,8 @@ class Capture(QtCore.QThread):
         self.s_sample = 0
         self.s_alpha = 0
         self.bench = None
+        self.warped=None
+        self.df = None
 
         self.f_count = 0
         self.f_res = 0
@@ -60,8 +61,7 @@ class Capture(QtCore.QThread):
         self.theta = None
         self.roll = None
         self.pitch = None
-        self.dx = None
-        self.dy = None
+        
         
         self.t = 0
         self.r = 0
@@ -123,14 +123,17 @@ class Capture(QtCore.QThread):
         self.m_count = 0
         self.angvel = angvel
 
-        self.theta = np.zeros((self.s_sample * 3 + 1))
-        self.roll = np.zeros((self.s_sample * 3 + 1))
-        self.pitch = np.zeros((self.s_sample * 3 + 1))
-        
-        self.dx = np.zeros((self.s_sample))
-        self.dy = np.zeros((self.s_sample))
+        self.theta = np.zeros((self.s_sample * 4))
+        self.roll = np.zeros((self.s_sample * 4))
+        self.pitch = np.zeros((self.s_sample * 4))
 
-        self.bench = np.zeros((self.s_sample * 2, self.height, self.width, 3),dtype=np.uint8)
+        self.bench = np.zeros((self.s_sample * 3, self.height, self.width, 3),dtype=np.uint8)
+        self.warped = np.zeros((self.s_sample * 2, self.height, self.width, 3),dtype=np.uint8)
+        self.crop = np.zeros((self.s_sample * 2, self.dist_height, self.dist_width, 3),dtype=np.uint8)
+
+        self.window = np.zeros((self.s_sample * 2, 2))
+        for i in range(self.s_sample*2):
+            self.window[i] = [self.height * 0.5, self.width * 0.5]
 
     def encodeStartMsg(self, angles, angvel):
         bytemsg = ''
@@ -175,12 +178,13 @@ class Capture(QtCore.QThread):
         self.displayOpt = opt
 
     def WindowControl(self, horizontal, vertical):
-        self.window[0] = self.window[0] + vertical*10
-        self.window[1] = self.window[1] + horizontal*10
+        pass
+        #self.window[0] = self.window[0] + vertical*10
+        #self.window[1] = self.window[1] + horizontal*10
 
     ### Drawing Functions ###
-    def plotFeatures(self, frame, new_f):
-        bound_col = []
+    def plotFeatures(self, frame, f0, new_f):
+        """bound_col = []
         for i in range(4):
             bound_col.append((255,255,0)) #bgr
 
@@ -188,34 +192,37 @@ class Capture(QtCore.QThread):
         cv2.line(frame, (self.vb[0],   self.hb[1]-1), (self.vb[1]-1, self.hb[1]-1), bound_col[1], 2)
         cv2.line(frame, (self.vb[0],   self.hb[0]),   (self.vb[0],   self.hb[1]  ), bound_col[2], 2) 
         cv2.line(frame, (self.vb[1]-1, self.hb[0]),   (self.vb[1]-1, self.hb[1]-1), bound_col[3], 2)
-
         cv2.circle(frame, (int(self.window[1]), int(self.window[0])), 3, (255,255,0), thickness=-1)
 
-        for i in range(self.f.shape[0]):
-            cv2.circle(frame, (int(self.f[i][0][0]), int(self.f[i][0][1])), 3, (0,0,255))
+        
+        """
+
+        for i in range(f0.shape[0]):
+            cv2.circle(frame, (int(f0[i][0][0]), int(f0[i][0][1])), 3, (0,0,255))
 
         for i in range(new_f.shape[0]):
             cv2.circle(frame, (int(new_f[i][0][0]), int(new_f[i][0][1])), 3, (0,0,255), thickness=-1)
 
-    def plotBound(self, frame):        
-        cv2.line(frame, (self.vb[0],   self.hb[0]),   (self.vb[1]-1, self.hb[0]  ), (0,0,0), 1)
-        cv2.line(frame, (self.vb[0],   self.hb[1]-1), (self.vb[1]-1, self.hb[1]-1), (0,0,0), 1)
-        cv2.line(frame, (self.vb[0],   self.hb[0]),   (self.vb[0],   self.hb[1]  ), (0,0,0), 1) 
-        cv2.line(frame, (self.vb[1]-1, self.hb[0]),   (self.vb[1]-1, self.hb[1]-1), (0,0,0), 1)
-        cv2.circle(frame, (int(self.window[1]), int(self.window[0])), 1, (0,0,0), thickness=-1)
+    def plotBound(self, frame, window, vb, hb):        
+        cv2.line(frame, (vb[0],   hb[0]),   (vb[1]-1, hb[0]  ), (0,0,0), 1)
+        cv2.line(frame, (vb[0],   hb[1]-1), (vb[1]-1, hb[1]-1), (0,0,0), 1)
+        cv2.line(frame, (vb[0],   hb[0]),   (vb[0],   hb[1]  ), (0,0,0), 1) 
+        cv2.line(frame, (vb[1]-1, hb[0]),   (vb[1]-1, hb[1]-1), (0,0,0), 1)
+        cv2.circle(frame, (int(window[1]), int(window[0])), 1, (0,0,0), thickness=-1)
 
     ### Feature matching ###
     def matchFeaturesInit(self, frame):
         gray = np.float32(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))[self.edge:(self.height - self.edge), self.edge:(self.width - self.edge)]
-        self.f = cv2.goodFeaturesToTrack(gray, self.f_count, self.f_res, self.f_dist, useHarrisDetector=True)
+        f = cv2.goodFeaturesToTrack(gray, self.f_count, self.f_res, self.f_dist, useHarrisDetector=True)
+        return f
         
-    def matchFeatures(self, frame): # Returns displacement field
+    def matchFeatures(self, frame, f0): # Returns displacement field
         gray = np.float32(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))[self.edge:(self.height - self.edge), self.edge:(self.width - self.edge)]
         new_f = cv2.goodFeaturesToTrack(gray, self.f_count, self.f_res, self.f_dist, useHarrisDetector=True)
         # Shift to avoid boundaries
-        for i in range(self.f.shape[0]):
-            self.f[i][0][0] = self.f[i][0][0] + self.edge
-            self.f[i][0][1] = self.f[i][0][1] + self.edge
+        for i in range(f0.shape[0]):
+            f0[i][0][0] = f0[i][0][0] + self.edge
+            f0[i][0][1] = f0[i][0][1] + self.edge
 
         for i in range(new_f.shape[0]):
             new_f[i][0][0] = new_f[i][0][0] + self.edge
@@ -223,10 +230,10 @@ class Capture(QtCore.QThread):
 
         #(1) Match between consequential frames
         matches = []
-        for i in range(self.f.shape[0]):
+        for i in range(f0.shape[0]):
             for j in range(i, new_f.shape[0]):
-                x0 = self.f[i][0][0]
-                y0 = self.f[i][0][1]
+                x0 = f0[i][0][0]
+                y0 = f0[i][0][1]
                 x1 = new_f[j][0][0]
                 y1 = new_f[j][0][1]
                 dist2 = (x1 - x0)*(x1 - x0) + (y1 - y0)*(y1 - y0)
@@ -235,17 +242,18 @@ class Capture(QtCore.QThread):
 
         #(2) Find displacement field with Ransac
         self.m_count = len(matches)
-        self.dispField = ransac.ransac_init(np.array(matches), self.r_tol)
+        dispField = ransac.ransac_init(np.array(matches), self.r_tol)
         for i in range(1, self.r_ite + 1):
-            self.dispField = ransac.ransac(np.array(matches), self.dispField, i, self.r_tol)
+            dispField = ransac.ransac(np.array(matches), dispField, i, self.r_tol)
         
-        self.plotFeatures(frame, new_f)
+        self.plotFeatures(frame, f0, new_f)
+
         # Recover boundary shift
         for i in range(new_f.shape[0]):
             new_f[i][0][0] = new_f[i][0][0] - self.edge
             new_f[i][0][1] = new_f[i][0][1] - self.edge
         
-        self.f = new_f
+        return dispField, new_f
 
     ### Flow ###    
     def run(self):
@@ -272,7 +280,7 @@ class Capture(QtCore.QThread):
 
         # Populate data: IMU
         i = 0
-        while i < (self.s_sample*2):
+        while i < (self.s_sample*3):
             msg = self.encodeMsg(self.relay)
             self.ser.write(msg)
             txt = self.ser.readline() 
@@ -285,16 +293,15 @@ class Capture(QtCore.QThread):
                 ret, frame = cap.read()
                 
                 if i==0:
-                    self.matchFeaturesInit(frame)
+                    f = self.matchFeaturesInit(frame)
                     
-                if i >= self.s_sample:
+                if i >= self.s_sample*2:
                     self.bench[i - self.s_sample] = frame
-                    self.matchFeatures(frame)
+                    dispField, f = self.matchFeatures(frame, f)
 
                 i = i + 1 # Proceed if txt successfully received; else retry
         
         t = time.time()
-
         # Initialize spline objects & targets
         pitch_spline = spline.Spline(self.s_sample, self.s_alpha)
         roll_spline = spline.Spline(self.s_sample, self.s_alpha)
@@ -305,6 +312,12 @@ class Capture(QtCore.QThread):
         # Start main flow
         nth = 0
         fcount = 0
+        window = [self.height*0.5, self.width*0.5]
+        
+        dx = 0
+        dy = 0
+        xshift = 0
+        yshift = 0
 
         while 1:
             msg = self.encodeMsg(self.relay)
@@ -317,72 +330,78 @@ class Capture(QtCore.QThread):
                 self.r = float(values[1])
                 self.p = float(values[2])
 
-                self.theta[2*self.s_sample + nth] = float(values[0])%180
-                self.roll[2*self.s_sample + nth] = float(values[1])
-                self.pitch[2*self.s_sample + nth] = float(values[2])
+                self.theta[3*self.s_sample + nth] = float(values[0])%180
+                self.roll[3*self.s_sample + nth] = float(values[1])
+                self.pitch[3*self.s_sample + nth] = float(values[2])
                 ret, frame = cap.read()
-                self.bench[self.s_sample + nth] = frame
-                ### Save screenshot ###
-                fname = '../data/0630/unstab/' + str(fcount) + '.jpg'
-                #cv2.imwrite(fname, self.bench[nth])
-                cv2.imwrite(fname, frame)
+                self.bench[2*self.s_sample + nth] = frame
+               
 
                 #(2) Warp based on spline targets
-                roll_bias = 0#- self.roll[self.s_sample + nth] + roll_tar[nth]
-                pitch_bias = 0#self.pitch[self.s_sample + nth] - pitch_tar[nth]
+                roll_bias = - self.roll[self.s_sample*3 + nth]# + roll_tar[nth]
+                pitch_bias = self.pitch[self.s_sample*3 + nth]# - pitch_tar[nth]
 
-                dz = self.findZ(self.theta[self.s_sample + nth])
-                H = self.findHomography(roll_bias, pitch_bias, 0., np.array([[0.], [(dz - 13.5)*0.8], [0.]]))
-                warped = cv2.warpPerspective(self.bench[nth], H, (self.width, self.height))
-
-                #(3) Find & track features
-                self.matchFeatures(warped)
-                self.window[0] = self.window[0] + self.dispField[1]*1.0 #y
-                self.window[1] = self.window[1] + self.dispField[0]*1.0
-
-                #(4) cover inherent motion in pixelwise
+                dz = self.findZ(self.theta[self.s_sample*3 + nth])
+                
+                H = self.findHomography(roll_bias, pitch_bias, 0., np.array([[0.], [13.5 - dz], [0.]])) #13.5-z
+                self.warped[self.s_sample + nth] = cv2.warpPerspective(self.bench[self.s_sample*2 + nth], H, (self.width, self.height))
+                
+                #(3) OPTIONAL: cover inherent motion in pixelwise
                 # pitch
-                #self.window[0] = self.window[0] - self.d * self.sin(pitch_bias)
-                #self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]+0.5*self.dist_height)]
+                #self.window[0] = self.window[0] - self.d * self.sin(pitch_bias) - yshift
+                #self.window[1] = self.window[1] - xshift
 
-                #(5) Check if exceeds boundary
-                exc = [0,0,0,0]
-                if self.window[0] - 0.5*self.dist_height <= 0: #up
-                    self.window[0] = 0.5*self.dist_height
-                    exc[0] = 1
+                #(4) Find & track features
+                dispField, f = self.matchFeatures(self.warped[self.s_sample + nth], f)
+                dx = dx + dispField[0]
+                dy = dy + dispField[1]
+                
+                self.window[self.s_sample + nth][0] = self.window[self.s_sample + nth - 1][0] + dispField[1]*1.0
+                self.window[self.s_sample + nth][1] = self.window[self.s_sample + nth - 1][1] + dispField[0]*1.0
 
-                elif self.window[0]+0.5*self.dist_height >= self.height: #down
-                    self.window[0] = self.height - (0.5*self.dist_height)
-                    exc[1] = 1
-
-                if (self.window[1]-0.5*self.dist_width) <= 0: #left
-                    self.window[1] = 0.5*self.dist_width
-                    exc[2] = 1
-            
-                elif (self.window[1]+0.5*self.dist_width) >= self.width: #right
-                    self.window[1] = self.width - (0.5*self.dist_width)
-                    exc[3] = 1
-
-                self.vb = [int(self.window[1]-0.5*self.dist_width), int(self.window[1]-0.5*self.dist_width) + self.dist_width]
-                self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]-0.5*self.dist_height) + self.dist_height]
-
+                #(5) Back to displaying warped[nth]. Check if exceeds boundary
                 #(6) Final crop
-                crop = warped[self.hb[0]:(self.hb[0]+self.dist_height),
-                              self.vb[0]:(self.vb[0]+self.dist_width), :]
-                ### Save screenshot ###
-                fname = '../data/0630/stab/' + str(fcount) + '.jpg'
-                cv2.imwrite(fname, crop)
 
                 #(7) Final display
-                self.plotBound(warped)
+                self.window[nth][0] = self.window[nth][0] - yshift
+                self.window[nth][1] = self.window[nth][1] - xshift
+                
+                if self.window[nth][0] - 0.5*self.dist_height <= 0: #up
+                    self.window[nth][0] = 0.5*self.dist_height
+
+                elif self.window[nth][0]+0.5*self.dist_height >= self.height: #down
+                    self.window[nth][0] = self.height - (0.5*self.dist_height)
+
+                if (self.window[nth][1]-0.5*self.dist_width) <= 0: #left
+                    self.window[nth][1] = 0.5*self.dist_width
+
+                elif (self.window[nth][1]+0.5*self.dist_width) >= self.width: #right
+                    self.window[nth][1] = self.width - (0.5*self.dist_width)
+                    
+                vb = [int(self.window[nth][1]-0.5*self.dist_width),
+                          int(self.window[nth][1]-0.5*self.dist_width) + self.dist_width]
+                hb = [int(self.window[nth][0]-0.5*self.dist_height),
+                          int(self.window[nth][0]-0.5*self.dist_height) + self.dist_height]
+                
+                crop = self.warped[nth][hb[0]:(hb[0]+self.dist_height),vb[0]:(vb[0]+self.dist_width), :]
+                ### Save screenshot ###
+                fname = '../data/0629/unstab/' + str(fcount) + '.jpg'
+                cv2.imwrite(fname, self.bench[nth])
+                fname = '../data/0629/stab/' + str(fcount) + '.jpg'
+                cv2.imwrite(fname, crop)
+                
+                self.plotBound(self.warped[nth], self.window[nth], vb, hb)
                 if self.displayOpt == False:
-                    dispImage = cv2.cvtColor(warped, cv2.COLOR_BGR2RGB)
+                    dispImage = cv2.cvtColor(self.warped[nth], cv2.COLOR_BGR2RGB)
                 else:
+                    
                     dispImage = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
                     
                 dispImage = cv2.resize(dispImage, (960,720))
                 convertToQtFormat = QImage(dispImage.data, dispImage.shape[1], dispImage.shape[0], QImage.Format_RGB888) #QImage.Format_Indexed8
                 self.changePixmap.emit(convertToQtFormat)
+
+
                 
                 #(8) Update & push bench frames & sensor data
                 if nth == self.s_sample - 1:
@@ -392,13 +411,23 @@ class Capture(QtCore.QThread):
                     roll_tar = roll_spline.findSpline(self.roll[0],               self.roll[self.s_sample],
                                                       self.roll[self.s_sample*2], self.roll[self.s_sample*3 - 1])
 
-                    for i in range(self.s_sample*2):
+                    for i in range(self.s_sample*3):
                         self.theta[i] = self.theta[i+self.s_sample]
                         self.roll[i] = self.roll[i+self.s_sample]
                         self.pitch[i] = self.pitch[i+self.s_sample]
 
-                    for i in range(self.s_sample):
+                    for i in range(self.s_sample*2):
                         self.bench[i] = self.bench[i+self.s_sample]
+
+                    for i in range(self.s_sample):
+                        self.warped[i] = self.warped[i+self.s_sample]
+                        self.crop[i] = self.crop[i+self.s_sample]
+                        self.window[i] = self.window[i+self.s_sample]
+
+                    xshift = dx / self.s_sample
+                    yshift = dy / self.s_sample
+                    dx = 0
+                    dy = 0
 
                     nth = 0
                 else:
@@ -439,7 +468,7 @@ class UI(QMainWindow):
 
         ### Control panel ###
         # Port selection
-        self.PortInput = QPlainTextEdit("COM5", self)
+        self.PortInput = QPlainTextEdit("COM4", self)
         self.PortInput.setGeometry(QtCore.QRect(10, 10, 120, 40))
 
         # Connect button
@@ -635,8 +664,8 @@ class UI(QMainWindow):
     def RightClicked(self):
         self.video_thread.WindowControl(1, 0)
 
-
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ui = UI()
     sys.exit(app.exec_())
+
