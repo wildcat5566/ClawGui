@@ -239,7 +239,7 @@ class Capture(QtCore.QThread):
         for i in range(1, self.r_ite + 1):
             self.dispField = ransac.ransac(np.array(matches), self.dispField, i, self.r_tol)
         
-        self.plotFeatures(frame, new_f)
+        #self.plotFeatures(frame, new_f)
         # Recover boundary shift
         for i in range(new_f.shape[0]):
             new_f[i][0][0] = new_f[i][0][0] - self.edge
@@ -322,18 +322,20 @@ class Capture(QtCore.QThread):
                 self.pitch[2*self.s_sample + nth] = float(values[2])
                 ret, frame = cap.read()
                 self.bench[self.s_sample + nth] = frame
+                
+
+                #(2) Warp based on spline targets
+                roll_bias = - self.roll[self.s_sample + nth] 
+                pitch_bias =  self.pitch[self.s_sample + nth]*0.5#pitch_tar[nth] #self.pitch[self.s_sample + nth] - 
+
+                dz = self.findZ(self.theta[self.s_sample + nth])
+                H = self.findHomography(roll_bias, pitch_bias, 0., np.array([[0.], [(dz - 13.5)*1.1], [0.]]))
+                warped = cv2.warpPerspective(self.bench[nth], H, (self.width, self.height))
+
                 ### Save screenshot ###
                 fname = '../data/0630/unstab/' + str(fcount) + '.jpg'
                 #cv2.imwrite(fname, self.bench[nth])
-                cv2.imwrite(fname, frame)
-
-                #(2) Warp based on spline targets
-                roll_bias = 0#- self.roll[self.s_sample + nth] + roll_tar[nth]
-                pitch_bias = 0#self.pitch[self.s_sample + nth] - pitch_tar[nth]
-
-                dz = self.findZ(self.theta[self.s_sample + nth])
-                H = self.findHomography(roll_bias, pitch_bias, 0., np.array([[0.], [(dz - 13.5)*0.8], [0.]]))
-                warped = cv2.warpPerspective(self.bench[nth], H, (self.width, self.height))
+                cv2.imwrite(fname, warped)
 
                 #(3) Find & track features
                 self.matchFeatures(warped)
@@ -342,8 +344,7 @@ class Capture(QtCore.QThread):
 
                 #(4) cover inherent motion in pixelwise
                 # pitch
-                #self.window[0] = self.window[0] - self.d * self.sin(pitch_bias)
-                #self.hb = [int(self.window[0]-0.5*self.dist_height), int(self.window[0]+0.5*self.dist_height)]
+                self.window[0] = self.window[0] - self.d * self.sin(3)
 
                 #(5) Check if exceeds boundary
                 exc = [0,0,0,0]
